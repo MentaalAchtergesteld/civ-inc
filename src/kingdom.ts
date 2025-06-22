@@ -1,39 +1,27 @@
-import { Tile } from "./tiles";
-
-export class Resource {
-	constructor(
-		public id: string,
-		public display: string,
-		public amount: number = 0
-	) {}
-
-	add(amount: number) { this.amount += amount; }
-	sub(amount: number) { this.amount -= amount; }
-}
+import { Resource, Tile, TileState } from "./map";
 
 export class Kingdom {
-	public resources = new Map<string, Resource>();
+	public resources: Record<Resource, number> = {} as Record<Resource, number>; 
 	public tiles: Tile[] = [];
 
-	constructor(public name: String) {};
-
-	getResource(id: string): Resource {
-		const res = this.resources.get(id);
-		if (!res) throw new Error(`Resource ${id} not found`);
-		return res;
-	}
-
-	addTile(tile: Tile) {
-		this.tiles.push(tile);
-	}
-
-	getTile(q: number, r: number): Tile | undefined {
-		return this.tiles.find(t => t.q == q && t.r == r);
-	}
-
-	tick(dt: number) {
-		for(const tile of this.tiles) {
-			tile.tick(this, dt);
+	constructor() {
+		for (const res of Object.values(Resource)) {
+			this.resources[res as Resource] = 0;
 		}
+	}
+
+	tick(dt: number): void {
+		for(const tile of this.tiles) {
+			if (tile.building) tile.building.tick(this, dt);
+		}
+	}
+	
+	claimTile(tile: Tile): boolean {
+		if (tile.state == TileState.Claimed) return false;
+
+		tile.state = TileState.Claimed;
+		tile.owner = this;
+		this.tiles.push(tile);
+		return true;
 	}
 }

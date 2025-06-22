@@ -13,106 +13,108 @@ body {
 }
 
 ul {
-	list-style: none;
+	list-style-type: none;
 }
 
-#tiles {
-	width: 100%;
-	height: 100%;
-	position: absolute;
+canvas {
 	z-index: 0;
 }
 
-/* PANELS */
+#open-kingdom-panel {
+	position: absolute;
+	z-index: 1;
+	left: 8px;
+	top: 8px;
+}
+
+button {
+	aspect-ratio: 1/1;
+	cursor: pointer;
+	background: hsl(0, 0%, 100%);
+	border: none;
+	outline: none;
+	border-radius: 4px;
+
+	width: 32px;
+	height: 32px;
+	line-height: 24px;
+	font-size: 24px;
+}
+
+button:hover {
+	background: hsl(0, 0%, 95%);
+}
+/* PANEL */
 
 .panel {
-	width: 350px;
+	position: absolute;
+	background: hsl(0, 0%, 85%);
+	width: 450px;
 	height: 100vh;
 	overflow-y: auto;
 
 	padding: 16px;
-
-	background: #f5f5f5;
-
+	
 	display: flex;
 	flex-direction: column;
-	gap: 16px;
+	gap: 8px;
 
-	position: absolute;
 	transition: transform 0.1s ease;
-
-	box-shadow: none; 
+	z-index: 2;
 }
 
-.panel.left  {
-	left:  0;
+.panel.left {
+	left: 0;
 	transform: translateX(-100%);
+	border-radius: 0px 16px 16px 0px;
 }
+
 .panel.right {
 	right: 0;
 	transform: translateX(100%);
+	border-radius: 16px 0px 0px 16px;
 }
+
+.panel.active.left  { box-shadow:  10px 0px 5px rgba(0, 0, 0, 0.1); }
+.panel.active.right { box-shadow: -10px 0px 5px rgba(0, 0, 0, 0.1); }
 
 .panel.active {
 	transform: translateX(0);
-	box-shadow: 0 0 20px rgba(0, 0, 0, 0.5);
 }
 
 .panel > .header {
 	display: flex;
 	flex-direction: row;
 	justify-content: space-between;
+	margin-bottom: 16px;
 }
 
 .panel > .header > button {
 	aspect-ratio: 1/1;
-
-	width: 32px;
-	height: 32px;
-
-	font-size: 24px;
-	line-height: 32px;
-
 	cursor: pointer;
-	background: #c5c5c5;
+	background: hsl(0, 0%, 100%);
 	border: none;
 	outline: none;
 	border-radius: 4px;
+
+	line-height: 24px;
+	font-size: 24px;
 }
 
 .panel > .header > button:hover {
-	background: #c0c0c0;
+	background: hsl(0, 0%, 95%);
 }
 
-
-/* TILE INFO PANEL */
 .panel > section {
-	background: #e5e5e5;
-	padding: 12px;
-	display: flex;
-	flex-direction: column;
-	gap: 12px;
+	background: hsl(0, 0%, 90%);
+	padding: 8px;
 	border-radius: 8px;
-}
 
-.tile-distribution {
-	width: 100%;
 	display: flex;
 	flex-direction: column;
-	gap: 12px;
-	background: #e1e1e1;
-	padding: 1rem;
+	line-height: 1.4;
 }
 
-.tile-distribution > canvas {
-	width: 60%;
-	aspect-ratio: 1/1;
-	align-self: center;
-}
-
-.build-menu {
-	background: green;
-	padding: 12px;
-	position: absolute;
-	z-index: 2;
+.panel > section.hidden {
+	display: none;
 }

@@ -1,88 +1,176 @@
-import { renderTiles, tilesCanvas, tileSize } from "./canvas";
-import { getHexesInRadius, pixelToHex } from "./hexgrid";
-import { Kingdom, Resource } from "./kingdom";
-import { KingdomPanel, Panel, PanelSide, TileInfoPanel } from "./panels";
-import { Farm, randomTileDistribution, Tile, tileColors, TileType } from "./tiles";
+import { Kingdom } from "./kingdom";
+import { discoverTile, drawBorder, drawSelectedTile, drawTiles, findTile, generateMap, hexDistance, pixelToHex, Tile, TileState } from "./map";
+import { KingdomPanel, TilePanel } from "./panel";
 
-function createResources(kingdom: Kingdom) {
-	kingdom.resources.set("food", 			new Resource("food", "Food"));
-	kingdom.resources.set("wood", 			new Resource("wood", "Wood"));
-	kingdom.resources.set("stone", 			new Resource("stone", "Stone"));
-	kingdom.resources.set("population", new Resource("population", "Population"));
+function lerp(a: number, b: number, t: number): number {
+	return a + (b - a) * t; 
 }
 
-function createTiles(kingdom: Kingdom, radius: number) {
-	const hexes = getHexesInRadius(radius);
+export const kingdom = new Kingdom();
 
-	for(const hex of hexes) {
-		let typeIndex = Math.floor(Math.random() * 4);
-		let type: TileType;
-		switch (typeIndex) {
-			case 0: type = TileType.Plains; break; 
-			case 1: type = TileType.Forest; break; 
-			case 2: type = TileType.Mountains; break; 
-			case 3: type = TileType.Fields; break; 
+const kingdomPanel = new KingdomPanel(kingdom);
+kingdomPanel.close();
+document.getElementById("open-kingdom-panel")?.addEventListener("click", _ => kingdomPanel.open());
+const tilePanel = new TilePanel();
+
+const canvas = document.getElementById("tiles")! as HTMLCanvasElement;
+canvas.style.width = "100%";
+canvas.style.height = "100%";
+canvas.style.position = "absolute";
+
+const ctx = canvas.getContext('2d')!;
+
+function resizeCanvas(canvas: HTMLCanvasElement) {
+		canvas.width = canvas.clientWidth;
+		canvas.height = canvas.clientHeight;
+}
+
+window.addEventListener("resize", () => resizeCanvas(canvas));
+resizeCanvas(canvas);
+
+const map = generateMap(100, 0.05);
+
+const visibleRadius = 50;
+const discoveredRadius = 50;
+const claimedRadius = 3;
+
+for (let q = -visibleRadius; q <= visibleRadius; q++) {
+	for (let r = -visibleRadius; r <= visibleRadius; r++) {
+		let distance = hexDistance(q, r);
+		if (distance > visibleRadius) continue;
+
+		let tile = findTile(q, r, map); 
+		if (tile == undefined) continue;
+
+		if (distance < claimedRadius) {
+			kingdom.claimTile(tile);
+		} else if (distance < discoveredRadius) {
+			tile.state = TileState.Discovered;
+		} else {
+			tile.state = TileState.Visible;
 		}
-		kingdom.addTile(new Tile(hex.q, hex.r, randomTileDistribution(), 8));
-	}	
-}
-
-function createKingdom(name: string, radius: number): Kingdom {
-	const kingdom = new Kingdom(name);
-
-	createResources(kingdom);
-	createTiles(kingdom, radius);
-
-	return kingdom;
-}
-
-const kingdom = createKingdom("My Kingdom", 3);
-
-const body = document.querySelector("body")!;
-
-const kingdomPanel = new KingdomPanel();
-kingdomPanel.show();
-body.appendChild(kingdomPanel.panel);
-
-const tilePanel = new TileInfoPanel();
-body.appendChild(tilePanel.panel);
-
-let selectedTile: Tile | undefined = undefined;
-
-function selectTile(tile: Tile) {
-	if(selectedTile == tile) {
-		selectedTile = undefined;
-		tilePanel.hide();
-	} else {
-		selectedTile = tile;
-		document.getElementById("tile-panel")?.classList.add("active");
-		tilePanel.setTile(selectedTile);
-		tilePanel.show();
 	}
 }
 
-tilesCanvas.addEventListener("click", (e) => {
-	const rect = tilesCanvas.getBoundingClientRect();
-	const x = e.clientX - rect.left - tilesCanvas.width / 2;
-	const y = e.clientY - rect.top - tilesCanvas.height / 2;
+const keys: Record<string, boolean> = {};
 
-	const hex = pixelToHex({x,y}, tileSize);
+document.addEventListener("keydown", e => keys[e.key.toLowerCase()] = true);
+document.addEventListener("keyup", e => keys[e.key.toLowerCase()] = false);
 
-	const tile = kingdom.getTile(hex.q, hex.r);
-	if(tile) {
-		selectTile(tile);	
+// Movement
+
+let xOffset = canvas.width/2;
+let yOffset = canvas.height/2;
+
+let currentPan = {x: 0,y: 0};
+const panSpeed = 10;
+
+function moveControls(delta: number) {
+	let xMovement = 0;
+	if (keys["a"]) xMovement += 1;
+	if (keys["d"]) xMovement -= 1;
+
+	let yMovement = 0;
+	if (keys["w"]) yMovement += 1;
+	if (keys["s"]) yMovement -= 1;
+
+	let totalMovement = Math.sqrt(xMovement*xMovement + yMovement*yMovement);
+
+	if (totalMovement > 0) {
+		xMovement = xMovement / totalMovement;
+		yMovement = yMovement / totalMovement;
 	}
+
+	currentPan.x = lerp(currentPan.x, panSpeed * xMovement, 10 * delta);
+	currentPan.y = lerp(currentPan.y, panSpeed * yMovement, 10 * delta);
+
+	yOffset += currentPan.y;
+	xOffset += currentPan.x;
+}
+
+// Zooming
+
+let scale = 1;
+let minScale = 0.05;
+let maxScale = 3;
+
+canvas.addEventListener("wheel", (e) => {
+	const delta = -e.deltaY * 0.001;
+	const newScale = Math.min(maxScale, Math.max(minScale, scale + delta));
+
+	const rect = canvas.getBoundingClientRect();
+	const mx = e.clientX - rect.left;
+	const my = e.clientY - rect.top;
+
+	const worldX = (mx - xOffset) / scale;
+	const worldY = (my - yOffset) / scale;
+
+	scale = newScale;
+
+	xOffset = mx - worldX * scale;
+	yOffset = my - worldY * scale;
+
+	console.log(scale);
 })
 
-let last = performance.now();
+// Clicking
+
+let selectedTile: Tile | undefined;
+
+let tileSize = 48;
+
+canvas.addEventListener("click", (e) => {
+	const rect = canvas.getBoundingClientRect();
+	const mouseX = (e.clientX - rect.left - xOffset) / scale;
+	const mouseY = (e.clientY - rect.top - yOffset) / scale;
+
+	const { q, r } = pixelToHex(mouseX, mouseY, tileSize);
+
+	const tile = findTile(q, r, map);
+
+	if(tile?.state == TileState.Undiscovered) return;
+	if(tile?.state == TileState.Visible) discoverTile(q, r, map);
+
+
+	if(selectedTile == tile) {
+		selectedTile = undefined;
+		tilePanel.close();
+	} else {
+		selectedTile = tile;
+		tilePanel.setTile(selectedTile!);
+		tilePanel.open();
+	}
+});
+
+let lastTime = performance.now();
 function loop(now: number) {
-	const dt = (now - last) / 1000;
+	let delta = (now - lastTime) / 1000; 
+	lastTime = now;
+
+	moveControls(delta);
 	
-	kingdom.tick(dt);
+	ctx.fillStyle = "hsl(0, 0%, 15%)"; 
+	ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-	last = now;
+	ctx.save();
+	ctx.translate(xOffset, yOffset);
+	ctx.scale(scale, scale);
 
-	renderTiles(kingdom, selectedTile);	
+	drawTiles(map, tileSize, ctx);
+
+	ctx.strokeStyle = "red";
+	ctx.lineWidth = 4;
+	drawBorder(kingdom.tiles, tileSize, ctx);
+
+	if (selectedTile) drawSelectedTile(selectedTile, tileSize, ctx);
+
+	ctx.restore();
+
+	kingdom.tick(delta);
+
+	if(kingdomPanel.isOpen) kingdomPanel.update();
+
 	requestAnimationFrame(loop);
 }
+
 requestAnimationFrame(loop);
