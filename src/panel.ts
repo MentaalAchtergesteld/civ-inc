@@ -1,5 +1,6 @@
 import { kingdom } from ".";
-import { Kingdom } from "./kingdom";
+import { Building, createFarm } from "./building";
+import { claimTile, Kingdom } from "./kingdom";
 import { Biome, Tile, TileState } from "./map";
 
 enum PanelSide {
@@ -36,7 +37,8 @@ export abstract class Panel {
 
 		if(closeable) {
 			const closeButton = document.createElement("button");
-			closeButton.innerText = "X";	
+			closeButton.innerText = "X";
+			closeButton.classList.add("square");
 
 			closeButton.addEventListener("click", () => this.close());
 			header.appendChild(closeButton);
@@ -106,13 +108,14 @@ export class TilePanel extends Panel {
 		this.buildingSection.appendChild(this.buildingInfo);
 		this.element.appendChild(this.buildingSection);
 
-		const button = document.createElement("button");
-		button.innerText = "Claim";
-		button.addEventListener("click", (_) => {
+		const claimBtn = document.createElement("button");
+		claimBtn .innerText = "Claim";
+		claimBtn.addEventListener("click", (_) => {
 			if(this.tile == undefined) return;
-			kingdom.claimTile(this.tile);
+			claimTile(kingdom, this.tile);
 		});
-		this.claimSection.appendChild(button);
+
+		this.claimSection.appendChild(claimBtn);
 
 		this.element.appendChild(this.claimSection);
 	}
@@ -168,9 +171,11 @@ export class TilePanel extends Panel {
 		const b = this.tile.building;
 		this.buildingInfo.innerHTML += `<p><strong>Type: </strong>${b.name}</p>`;
 
+		this.buildingInfo.innerHTML += `<p><strong>Productivity: </strong>${b.productivity.toFixed(2)}</p>`
+
 		this.buildingInfo.innerHTML += "<strong>Production:</strong>";
 		const list = document.createElement("ul");
-		for(const [res, count] of Object.entries(b.getProduction())) {
+		for(const [res, count] of Object.entries(b.output)) {
 			const li = document.createElement("li");
 			li.innerText = `${res}: ${count}`;
 			list.appendChild(li);
@@ -190,5 +195,33 @@ export class TilePanel extends Panel {
 		} else {
 			this.claimSection.classList.remove("hidden");
 		}
+	}
+}
+
+const buildingBar = document.getElementById("building-bar")!;
+export let selectedBuilding: Building | undefined;
+
+export function populateBuildingBar(buildings: Building[]) {
+	buildingBar.innerHTML = "";
+
+	for(const b of buildings) {
+		const btn = document.createElement("button");
+		btn.classList.add("square");
+		btn.innerText = b.name;
+
+		btn.addEventListener("click", () => {
+			if(selectedBuilding == b) {
+				selectedBuilding = undefined;
+				btn.classList.remove("selected");
+			} else {
+				Array.from(buildingBar.querySelectorAll("button.selected"))
+					.forEach(btn => btn.classList.remove("selected"));
+
+					selectedBuilding = b;
+					btn.classList.add("selected");
+			}
+		});
+
+		buildingBar.appendChild(btn);
 	}
 }

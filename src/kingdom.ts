@@ -1,27 +1,34 @@
+import { collectBuilding } from "./building";
 import { Resource, Tile, TileState } from "./map";
 
-export class Kingdom {
-	public resources: Record<Resource, number> = {} as Record<Resource, number>; 
-	public tiles: Tile[] = [];
+export type Kingdom = {
+	name: string,
+	resources: Record<Resource, number>,
+	tiles: Tile[]
+}
 
-	constructor() {
-		for (const res of Object.values(Resource)) {
-			this.resources[res as Resource] = 0;
-		}
-	}
+export function createKingdom(name: string): Kingdom {
+	const keys = Object.values(Resource) as Resource[];
+	const resources = Object.fromEntries(keys.map(r => [r, 0])) as Record<Resource, number>;
 
-	tick(dt: number): void {
-		for(const tile of this.tiles) {
-			if (tile.building) tile.building.tick(this, dt);
-		}
+	return {
+		name,
+		resources,
+		tiles: [],
 	}
-	
-	claimTile(tile: Tile): boolean {
-		if (tile.state == TileState.Claimed) return false;
+}
 
-		tile.state = TileState.Claimed;
-		tile.owner = this;
-		this.tiles.push(tile);
-		return true;
+export function tickKingdom(kingdom: Kingdom, dt: number): void {
+	for(const tile of kingdom.tiles) {
+		if (tile.building) collectBuilding(kingdom, tile, dt);
 	}
+}
+
+export function claimTile(kingdom: Kingdom, tile: Tile): boolean {
+	if (tile.state == TileState.Claimed || tile.owner != undefined) return false;
+
+	tile.state = TileState.Claimed;
+	tile.owner = kingdom;
+	kingdom.tiles.push(tile);
+	return true;
 }

@@ -1,5 +1,5 @@
 import { makeNoise2D } from "open-simplex-noise";
-import { Building, Farm } from "./building";
+import { Building, createFarm } from "./building";
 import { Kingdom } from "./kingdom";
 
 export enum Biome {
@@ -57,7 +57,7 @@ function createTile(
 	return {
 		q, r, biome, state, yieldMultipliers,
 		building: undefined,
-		owner: undefined
+		owner: undefined,
 	}
 }
 
@@ -157,7 +157,6 @@ export function generateMap(radius: number, scale: number): Tile[] {
 			const multipliers = yieldMultipliers[biome];
 
 			const tile = createTile(q, r, biome, TileState.Undiscovered, multipliers as Record<Resource, number>);
-			if (biome == Biome.Plains) tile.building = new Farm();
 			tiles.push(tile);
 
 		}

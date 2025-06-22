@@ -1,12 +1,15 @@
-import { Kingdom } from "./kingdom";
+import { buildings } from "./building";
+import { claimTile, createKingdom, Kingdom, tickKingdom } from "./kingdom";
 import { discoverTile, drawBorder, drawSelectedTile, drawTiles, findTile, generateMap, hexDistance, pixelToHex, Tile, TileState } from "./map";
-import { KingdomPanel, TilePanel } from "./panel";
+import { KingdomPanel, populateBuildingBar, selectedBuilding, TilePanel } from "./panel";
 
 function lerp(a: number, b: number, t: number): number {
 	return a + (b - a) * t; 
 }
 
-export const kingdom = new Kingdom();
+export const kingdom = createKingdom("Your Kingdom");
+
+populateBuildingBar(buildings);
 
 const kingdomPanel = new KingdomPanel(kingdom);
 kingdomPanel.close();
@@ -43,7 +46,7 @@ for (let q = -visibleRadius; q <= visibleRadius; q++) {
 		if (tile == undefined) continue;
 
 		if (distance < claimedRadius) {
-			kingdom.claimTile(tile);
+			claimTile(kingdom, tile);
 		} else if (distance < discoveredRadius) {
 			tile.state = TileState.Discovered;
 		} else {
@@ -119,6 +122,27 @@ let selectedTile: Tile | undefined;
 
 let tileSize = 48;
 
+function placeBuilding(tile: Tile | undefined) {
+	if(tile == undefined) return;
+	if(tile.state != TileState.Claimed) return;
+	if(tile.owner != kingdom) return;
+	if(tile.building) return;
+	if(!selectedBuilding!.allowedBiomes.includes(tile.biome)) return;
+
+	tile.building = selectedBuilding;
+}
+
+function selectTile(tile: Tile | undefined) {
+	if(selectedTile == tile) {
+		selectedTile = undefined;
+		tilePanel.close();
+	} else {
+		selectedTile = tile;
+		tilePanel.setTile(selectedTile!);
+		tilePanel.open();
+	}
+}
+
 canvas.addEventListener("click", (e) => {
 	const rect = canvas.getBoundingClientRect();
 	const mouseX = (e.clientX - rect.left - xOffset) / scale;
@@ -131,15 +155,13 @@ canvas.addEventListener("click", (e) => {
 	if(tile?.state == TileState.Undiscovered) return;
 	if(tile?.state == TileState.Visible) discoverTile(q, r, map);
 
-
-	if(selectedTile == tile) {
-		selectedTile = undefined;
-		tilePanel.close();
-	} else {
-		selectedTile = tile;
-		tilePanel.setTile(selectedTile!);
-		tilePanel.open();
+	if (selectedBuilding) {
+		placeBuilding(tile);
+	} else {
+		selectTile(tile);
 	}
+
+	
 });
 
 let lastTime = performance.now();
@@ -166,7 +188,7 @@ function loop(now: number) {
 
 	ctx.restore();
 
-	kingdom.tick(delta);
+	tickKingdom(kingdom, delta);
 
 	if(kingdomPanel.isOpen) kingdomPanel.update();
 
