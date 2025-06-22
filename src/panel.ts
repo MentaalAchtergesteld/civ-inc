@@ -1,5 +1,5 @@
 import { kingdom } from ".";
-import { Building, createFarm } from "./building";
+import { Building } from "./building";
 import { claimTile, Kingdom } from "./kingdom";
 import { Biome, Tile, TileState } from "./map";
 
@@ -206,7 +206,7 @@ export function populateBuildingBar(buildings: Building[]) {
 
 	for(const b of buildings) {
 		const btn = document.createElement("button");
-		btn.classList.add("square");
+		// btn.classList.add("square");
 		btn.innerText = b.name;
 
 		btn.addEventListener("click", () => {

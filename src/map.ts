@@ -1,5 +1,5 @@
 import { makeNoise2D } from "open-simplex-noise";
-import { Building, createFarm } from "./building";
+import { Building } from "./building";
 import { Kingdom } from "./kingdom";
 
 export enum Biome {

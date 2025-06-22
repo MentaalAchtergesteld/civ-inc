@@ -41,16 +41,26 @@ export function collectBuilding(kingdom: Kingdom, tile: Tile, dt: number): numbe
 	return productivity;
 }
 
-export function createFarm(): Building {
-	return {
+export const buildings = [
+	{
 		name: "Farm",
-		allowedBiomes: [Biome.Plains],
-		input: {},
+		allowedBiomes: [ Biome.Plains, Biome.Hills ],
+		input: { [Resource.Food]: 0.3 },
 		output: { [Resource.Food]: 1 },
 		productivity: 0,
-	};
-}
-
-export const buildings = [
-	createFarm(),
+	},
+	{
+		name: "Mine",
+		allowedBiomes: [ Biome.Mountains, Biome.Hills ],
+		input: { [Resource.Food]: 0.3 },
+		output: { [Resource.Stone]: 1, [Resource.Ore]: 0.1, },
+		productivity: 0,
+	},
+	{
+		name: "Lumbermill",
+		allowedBiomes: [ Biome.Forest ],
+		input: { [Resource.Food]: 0.3 },
+		output: { [Resource.Wood]: 1 },
+		productivity: 0,
+	},
 ];
