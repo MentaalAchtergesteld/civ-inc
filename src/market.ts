@@ -69,25 +69,27 @@ interface OrderBook {
 	buys: Order[],
 
 	highestSell: number,
-	highestBuy: number,
-
 	lowestSell: number,
-	lowestBuy: number,
-
 	averageSell: number,
+
+	highestBuy: number,
+	lowestBuy: number,
 	averageBuy: number,
+
+	sellHistory: number[],
+	buyHistory: number[],
 };
 
 function createOrderBook(): OrderBook {
 	return {
-		sells: [],
-		buys: [],
+		sells: [], buys: [],
 		highestSell: 0,
 		highestBuy: 0,
 		lowestSell: 0,
 		lowestBuy: 0,
 		averageSell: 0,
-		averageBuy: 0
+		averageBuy: 0,
+		sellHistory: [], buyHistory: []
 	} as OrderBook
 }
 
@@ -148,6 +150,7 @@ function calculateAveragePrice(orders: Order[]): number {
 	return totalQuantity > 0 ? totalValue / totalQuantity : 0;
 }
 
+const MAX_HISTORY = 100;
 function updateBookData(book: OrderBook) {
 	if(book.sells.length > 0) {
 		book.highestSell = book.sells[book.sells.length-1].limitPricePer;
@@ -162,6 +165,23 @@ function updateBookData(book: OrderBook) {
 
 	book.averageSell = calculateAveragePrice(book.sells);
 	book.averageBuy  = calculateAveragePrice(book.buys);
+
+	book.sellHistory.push(book.averageSell);
+	book.buyHistory.push(book.averageBuy);
+
+	if (book.sellHistory.length > MAX_HISTORY) book.sellHistory.shift();
+	if (book.buyHistory.length > MAX_HISTORY)  book.buyHistory.shift();
+}
+
+function getRecentAverage(type: OrderType, period: number, book: OrderBook): number {
+	const history = type == OrderType.Sell ? book.sellHistory : book.buyHistory;
+	const len = history.length;
+	if (len == 0) return 0;
+	const start = Math.max(0, len - period);
+	const slice = history.slice(start, len);
+	const sum = slice.reduce((acc, v) => acc + v, 0);
+
+	return sum / slice.length;
 }
 
 function handleTrade(buy: Order, sell: Order, market: Market): boolean {
@@ -182,8 +202,8 @@ function handleTrade(buy: Order, sell: Order, market: Market): boolean {
 	buy.quantity -= traded;
 	sell.quantity -= traded;
 
-	buy.source.inventory[buy.resource]!   += traded;
-	sell.source.inventory[sell.resource]! -= traded;
+	buy.source.inventory[buy.resource]   = (buy.source.inventory[buy.resource] || 0)   + traded;
+	sell.source.inventory[sell.resource] = (sell.source.inventory[sell.resource] || 0) + traded;
 
 	return true;
 }
@@ -277,6 +297,7 @@ function produce(company: Company, dt: number) {
 			const dNeed = need*dt;
 
 			const have = company.inventory[res] || 0;
+			// if(company.name.startsWith("Bakery")) console.log("have " + have);
 			if(have < dNeed) { success = false; break; }
 			
 			company.inventory[res]! -= dNeed;
@@ -286,6 +307,7 @@ function produce(company: Company, dt: number) {
 		if (success) {
 			const output = plan.output.resource;
 			const count = plan.output.count;
+			// if(company.name.startsWith("Bakery")) console.log("output" + output);
 			company.inventory[output] = (company.inventory[output] || 0) + count*dt;
 		} else {
 			for (const [resKey, used] of Object.entries(usedResources)) {
@@ -313,7 +335,7 @@ function buyBehaviour(
 		const book = market.books[res];
 		if (!book) continue;
 
-		const basePrice = book.averageSell || 1;
+		const basePrice = getRecentAverage(OrderType.Sell, 50, book) || 1;
 		const bidPrice = basePrice * (1 + company.priceSensitivity);
 
 		const totalCost = bidPrice * dNeed;
@@ -329,7 +351,9 @@ function getPlanCost(plan: ProductionPlan, market: Market): number {
 	return Object.entries(plan.input).reduce((total, [resKey, amount]) => {
 		const res = resKey as Resource;
 
-		const avgPrice = market.books[res]?.averageSell || 1;
+		// const avgPrice = market.books[res]?.averageSell || 1;
+		if (market.books[res] == undefined) return total;
+		const avgPrice = getRecentAverage(OrderType.Sell, 10, market.books[res]) || 1;
 		return total + amount * avgPrice;
 	}, 0);
 }
@@ -354,10 +378,11 @@ function sellBehaviour(
 		const book = market.books[res];
 		if (!book) continue;
 		
-		const marketPrice = (book.averageBuy || 1) * (1 + company.priceSensitivity);
+		const marketPrice = (getRecentAverage(OrderType.Buy, 10, book) || 1) * (1 + company.priceSensitivity);
 		const minPrice = getPlanCost(plan, market) * (1 + company.preferredMargin);
 
-		const askPrice = Math.max(marketPrice, minPrice);
+
+		const askPrice = Math.max(marketPrice, minPrice, 1);
 
 
 		const order = createSellOrder(company, res, have, askPrice, 5);
@@ -380,13 +405,13 @@ function createFarm(): Company {
 	return {
 		name: "Farm" + Math.floor(Math.random()*100),
 		money: 100,
-		inventory: {},
+		inventory: { [Resource.Air]: 5 },
 		preferredMargin: Math.random()*0.2,
 		preferredSurplus: Math.random()*3,
 		priceSensitivity: Math.random()*0.2,
 		production: [
 			{
-				input: {},
+				input: { [Resource.Air]: 1 },
 				output: { resource: Resource.Wheat, count: 1 },
 			}
 		],
@@ -423,7 +448,7 @@ function createConsumer(): Company {
 		production: [
 			{
 				input: { [Resource.Bread]: 1 },
-				output: { resource: Resource.Air, count: 0 },
+				output: { resource: Resource.Air, count: 1 },
 			}
 		],
 		activeOrders: []
@@ -431,14 +456,14 @@ function createConsumer(): Company {
 }
 
 export function initializeMarket() {
-	const farmCount = 5;
-	const bakeryCount = 10;
-	const consumerCount = 16;
+	const farmCount = 3;
+	const bakeryCount = 5;
+	const consumerCount = 5;
 
 	const farms = Array.from({length:farmCount}, () => createFarm());
 	const bakeries = Array.from({length:bakeryCount}, () => createBakery());
 	const consumers = Array.from({length:consumerCount}, () => createConsumer());
-	const companies = [...farms, ...bakeries, ...consumers];
+	let companies = [...farms, ...bakeries, ...consumers];
 
 	const market = createMarket();
 
@@ -447,13 +472,29 @@ export function initializeMarket() {
 		const dt = (now - lastTime)/1000;
 		lastTime = now;
 
-		companies.forEach(c => tickCompany(c, market, dt));
 		tickMarket(market, dt);
+		companies.forEach(c => tickCompany(c, market, dt));
 
-		document.getElementById("wheat-price")!.innerText = market.books[Resource.Wheat]!.averageBuy.toFixed(2);
-		document.getElementById("bread-price")!.innerText = market.books[Resource.Bread]!.averageBuy.toFixed(2);
+		companies = companies.filter(c => c.money > 0);
 
-		consumers.forEach(c => c.money = 10000);
+		const wheat = document.getElementById("wheat")!;
+		const bread = document.getElementById("bread")!;
+
+		let farms = companies.filter(c => c.name.startsWith("Farm"));
+		wheat.innerText = "";
+		wheat.innerText += "[WHEAT]";
+		wheat.innerText += " Avg Price: " + getRecentAverage(OrderType.Buy, 10, market.books[Resource.Wheat]!).toFixed(2);
+		wheat.innerText += " Farms left:" + farms.length; 
+		wheat.innerText += " Avg Money: " + (farms.reduce((acc, b) => acc+b.money, 0) / farms.length).toFixed(2); 
+
+		let bakeries = companies.filter(c => c.name.startsWith("Bakery"));
+		bread.innerText = "";
+		bread.innerText += "[BREAD]";
+		bread.innerText += " Avg Price: " + getRecentAverage(OrderType.Buy, 10, market.books[Resource.Bread]!).toFixed(2);
+		bread.innerText += " Bakeries left:" + bakeries.length; 
+		bread.innerText += " Avg Money: " + (bakeries.reduce((acc, b) => acc+b.money, 0) / bakeries.length).toFixed(2); 
+
+		// consumers.forEach(c => c.money = 10000);
 		// console.log(bakeries.reduce((acc, b) => acc+b.money, 0)/bakeries.length);
 	
 		requestAnimationFrame(loop);
@@ -461,8 +502,10 @@ export function initializeMarket() {
 	requestAnimationFrame(loop);
 }
 
+const DO_LOG = false;
+
 function log(message: string): void {
-	return;
+	if (!DO_LOG) return;
 	const logElem = document.getElementById("log")!;
 	logElem.innerText += message + "\n";
 	logElem.scrollTop = logElem.scrollHeight;
