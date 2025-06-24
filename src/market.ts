@@ -60,7 +60,7 @@ export function createBuyOrder(
 		timestamp: 0,
 		active: true,
 		spent: 0,
-		totalReserved: 0,
+		totalReserved: limitPricePer*quantity,
 	}
 }
 
@@ -89,7 +89,7 @@ function createOrderBook(): OrderBook {
 		lowestBuy: 0,
 		averageSell: 0,
 		averageBuy: 0,
-		sellHistory: [], buyHistory: []
+		sellHistory: [1], buyHistory: [1]
 	} as OrderBook
 }
 
@@ -125,15 +125,18 @@ function releaseFunds(company: Company, amount: number, market: Market) {
 
 export function pushOrder(order: Order, market: Market): boolean {
 	const orderPrice = order.limitPricePer * order.quantity;
-	if (order.source.money <  orderPrice) return false;
-
-	reserveFunds(order.source, orderPrice, market);
 
 	order.timestamp = market.currentTime;
 	let book = market.books[order.resource];
 	switch(order.type) {
-		case OrderType.Sell: book.sells.push(order); break;
-		case OrderType.Buy:  book.buys.push(order);  break;
+		case OrderType.Sell: 
+			book.sells.push(order);
+			break;
+		case OrderType.Buy:
+			if (order.source.money <  orderPrice) return false;
+			book.buys.push(order);
+			reserveFunds(order.source, orderPrice, market);
+			break;
 	}
 
 	order.source.activeOrders.push(order);
@@ -173,8 +176,7 @@ function updateBookData(book: OrderBook) {
 	if (book.buyHistory.length > MAX_HISTORY)  book.buyHistory.shift();
 }
 
-function getRecentAverage(type: OrderType, period: number, book: OrderBook): number {
-	const history = type == OrderType.Sell ? book.sellHistory : book.buyHistory;
+function getRecentAverage(history: number[], period: number): number {
 	const len = history.length;
 	if (len == 0) return 0;
 	const start = Math.max(0, len - period);
@@ -196,6 +198,7 @@ function handleTrade(buy: Order, sell: Order, market: Market): boolean {
 	market.reservedFunds.set(buy.source, reservedFunds-price*traded);
 
 	buy.spent += traded * price;
+	sell.source.money += traded * price;
 
 	log(`Trade: ${traded} ${buy.resource} for ${price} from ${sell.source.name} to ${buy.source.name} @ ${market.currentTime}`);
 
@@ -203,7 +206,7 @@ function handleTrade(buy: Order, sell: Order, market: Market): boolean {
 	sell.quantity -= traded;
 
 	buy.source.inventory[buy.resource]   = (buy.source.inventory[buy.resource] || 0)   + traded;
-	sell.source.inventory[sell.resource] = (sell.source.inventory[sell.resource] || 0) + traded;
+	sell.source.inventory[sell.resource] = (sell.source.inventory[sell.resource] || 0) - traded;
 
 	return true;
 }
@@ -212,7 +215,10 @@ function cleanOrder(order: Order, market: Market): boolean {
 	if(order.quantity == 0 || market.currentTime > order.timestamp+order.lifetime) {
 	// if(order.quantity == 0) {
 		order.active = false;
-		releaseFunds(order.source, order.totalReserved-order.spent, market);
+
+		if(order.type == OrderType.Buy) {
+			releaseFunds(order.source, order.totalReserved-order.spent, market);
+		}
 		return false;
 	} else {
 		return true;
@@ -241,7 +247,10 @@ function matchOrders(book: OrderBook, market: Market): void {
 	
 		const success = handleTrade(buy, sell, market);
 		
-		if (!success) continue;
+		if (!success) {
+			if (buy.timestamp <= sell.timestamp) i++;
+			else j++;
+		};
 
 		if (buy.quantity == 0)  i++;
 		if (sell.quantity == 0) j++;
@@ -267,7 +276,7 @@ interface ProductionPlan {
 }
 
 interface Company {
-	name: String,
+	name: string,
 	money: number,
 	inventory: ResourceMap,
 	preferredMargin: number,
@@ -335,13 +344,13 @@ function buyBehaviour(
 		const book = market.books[res];
 		if (!book) continue;
 
-		const basePrice = getRecentAverage(OrderType.Sell, 50, book) || 1;
+		const basePrice = getRecentAverage(book.sellHistory, 250) || 1;
 		const bidPrice = basePrice * (1 + company.priceSensitivity);
 
 		const totalCost = bidPrice * dNeed;
 		if(company.money < totalCost) continue;
 
-		const order = createBuyOrder(company, res, dNeed, bidPrice, 5);
+		const order = createBuyOrder(company, res, dNeed, bidPrice, 3);
 
 		pushOrder(order, market);
 	}
@@ -351,9 +360,8 @@ function getPlanCost(plan: ProductionPlan, market: Market): number {
 	return Object.entries(plan.input).reduce((total, [resKey, amount]) => {
 		const res = resKey as Resource;
 
-		// const avgPrice = market.books[res]?.averageSell || 1;
 		if (market.books[res] == undefined) return total;
-		const avgPrice = getRecentAverage(OrderType.Sell, 10, market.books[res]) || 1;
+		const avgPrice = getRecentAverage(market.books[res].buyHistory, 100) || 1;
 		return total + amount * avgPrice;
 	}, 0);
 }
@@ -378,14 +386,14 @@ function sellBehaviour(
 		const book = market.books[res];
 		if (!book) continue;
 		
-		const marketPrice = (getRecentAverage(OrderType.Buy, 10, book) || 1) * (1 + company.priceSensitivity);
+		const marketPrice = (getRecentAverage(book.buyHistory, 250) || 1) * (1 + company.priceSensitivity);
 		const minPrice = getPlanCost(plan, market) * (1 + company.preferredMargin);
 
 
-		const askPrice = Math.max(marketPrice, minPrice, 1);
+		const askPrice = Math.max(marketPrice, minPrice);
 
 
-		const order = createSellOrder(company, res, have, askPrice, 5);
+		const order = createSellOrder(company, res, have, askPrice, 3);
 		pushOrder(order, market);
 	}
 }
@@ -411,7 +419,7 @@ function createFarm(): Company {
 		priceSensitivity: Math.random()*0.2,
 		production: [
 			{
-				input: { [Resource.Air]: 1 },
+				input: { [Resource.Air]: 1 }, 
 				output: { resource: Resource.Wheat, count: 1 },
 			}
 		],
@@ -440,11 +448,11 @@ function createBakery(): Company {
 function createConsumer(): Company {
 	return {
 		name: "Consumer" + Math.floor(Math.random()*1000),
-		money: 10000,
+		money: 100,
 		inventory: {},
-		preferredMargin: 0,
-		preferredSurplus: 0,
-		priceSensitivity: 0.5,
+		preferredMargin: Math.random()*0.2,
+		preferredSurplus: Math.random()*3,
+		priceSensitivity: Math.random()*0.2,
 		production: [
 			{
 				input: { [Resource.Bread]: 1 },
@@ -455,15 +463,34 @@ function createConsumer(): Company {
 	}
 }
 
+function debugOrderBook(resource: Resource, producers: Company[], market: Market, elem: HTMLElement) {
+		elem.innerText = "";
+		elem.innerText += `[${resource}]`;
+		elem.innerText += "\n";
+		elem.innerText += " Avg Price: " + getRecentAverage(market.books[resource].buyHistory, 10).toFixed(2);
+		elem.innerText += "\n";
+		elem.innerText += " Producers left: " + producers.length; 
+		elem.innerText += "\n";
+		elem.innerText += " Avg Money: " + (producers.reduce((acc, b) => acc+b.money, 0) / producers.length).toFixed(2); 
+		elem.innerText += "\n";
+		elem.innerText += " Sell orders: " + market.books[resource].sells.length;
+		elem.innerText += "\n";
+		elem.innerText += " Buy orders: " + market.books[resource].buys.length;
+}
+
+const wheat = document.getElementById("wheat")!;
+const bread = document.getElementById("bread")!;
+const air = document.getElementById("air")!;
+const totalMoney = document.getElementById("total-money")!;
+
 export function initializeMarket() {
-	const farmCount = 3;
-	const bakeryCount = 5;
+	const farmCount = 2;
+	const bakeryCount = 3;
 	const consumerCount = 5;
 
-	const farms = Array.from({length:farmCount}, () => createFarm());
-	const bakeries = Array.from({length:bakeryCount}, () => createBakery());
-	const consumers = Array.from({length:consumerCount}, () => createConsumer());
-	let companies = [...farms, ...bakeries, ...consumers];
+	let farms: Company[] = Array.from({length:farmCount}, () => createFarm());
+	let bakeries: Company[] = Array.from({length:bakeryCount}, () => createBakery());
+	let consumers: Company[] = Array.from({length:consumerCount}, () => createConsumer());
 
 	const market = createMarket();
 
@@ -472,41 +499,46 @@ export function initializeMarket() {
 		const dt = (now - lastTime)/1000;
 		lastTime = now;
 
+		// console.log("FARMS");
+		farms.forEach(c => tickCompany(c, market, dt));
+		farms = farms.filter(c => c.money > 0);
+
+		// console.log("BAKERIES");
+		bakeries.forEach(c => tickCompany(c, market, dt));
+		bakeries = bakeries.filter(c => c.money > 0);
+
+		// console.log("CONSUMERS");
+		consumers.forEach(c => tickCompany(c, market, dt));
+		// consumers.forEach(c => {tickCompany(c, market, dt); c.money = 100;});
+		consumers = consumers.filter(c => c.money > 0);
+
+		// console.log("MARKET");
 		tickMarket(market, dt);
-		companies.forEach(c => tickCompany(c, market, dt));
 
-		companies = companies.filter(c => c.money > 0);
-
-		const wheat = document.getElementById("wheat")!;
-		const bread = document.getElementById("bread")!;
-
-		let farms = companies.filter(c => c.name.startsWith("Farm"));
-		wheat.innerText = "";
-		wheat.innerText += "[WHEAT]";
-		wheat.innerText += " Avg Price: " + getRecentAverage(OrderType.Buy, 10, market.books[Resource.Wheat]!).toFixed(2);
-		wheat.innerText += " Farms left:" + farms.length; 
-		wheat.innerText += " Avg Money: " + (farms.reduce((acc, b) => acc+b.money, 0) / farms.length).toFixed(2); 
-
-		let bakeries = companies.filter(c => c.name.startsWith("Bakery"));
-		bread.innerText = "";
-		bread.innerText += "[BREAD]";
-		bread.innerText += " Avg Price: " + getRecentAverage(OrderType.Buy, 10, market.books[Resource.Bread]!).toFixed(2);
-		bread.innerText += " Bakeries left:" + bakeries.length; 
-		bread.innerText += " Avg Money: " + (bakeries.reduce((acc, b) => acc+b.money, 0) / bakeries.length).toFixed(2); 
-
-		// consumers.forEach(c => c.money = 10000);
-		// console.log(bakeries.reduce((acc, b) => acc+b.money, 0)/bakeries.length);
+		// console.log("DEBUG");
+		debugOrderBook(Resource.Wheat, farms,     market, wheat);
+		debugOrderBook(Resource.Bread, bakeries,  market, bread);
+		debugOrderBook(Resource.Air,   consumers, market, air);
+		
+		// console.log("TOTAL MONEY");
+		totalMoney.innerText = [...farms,...bakeries,...consumers].reduce((acc, c) => acc+c.money, 0).toFixed(2);
 	
 		requestAnimationFrame(loop);
 	}
 	requestAnimationFrame(loop);
 }
 
-const DO_LOG = false;
+const DO_LOG = true;
+const logElem = document.getElementById("log")!;
 
 function log(message: string): void {
 	if (!DO_LOG) return;
-	const logElem = document.getElementById("log")!;
-	logElem.innerText += message + "\n";
+	const entry = document.createElement("div");
+	entry.innerText = message;
+	logElem.appendChild(entry);
 	logElem.scrollTop = logElem.scrollHeight;
+
+	while (logElem.children.length > 100) {
+		logElem.removeChild(logElem.firstChild!);
+	}
 }
