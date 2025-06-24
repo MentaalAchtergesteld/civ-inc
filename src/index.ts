@@ -1,13 +1,15 @@
 import { buildings } from "./building";
 import { claimTile, createKingdom, Kingdom, tickKingdom } from "./kingdom";
 import { discoverTile, drawBorder, drawSelectedTile, drawTiles, findTile, generateMap, hexDistance, pixelToHex, Resource, Tile, TileState } from "./map";
+import { initializeMarket } from "./market";
 import { KingdomPanel, populateBuildingBar, selectedBuilding, TilePanel } from "./panel";
 
 // function lerp(a: number, b: number, t: number): number {
 // 	return a + (b - a) * t; 
 // }
 //
-// export const kingdom = createKingdom("Your Kingdom");
+initializeMarket()
+export const kingdom = createKingdom("Your Kingdom");
 // kingdom.resources[Resource.Food] += 10;
 //
 // populateBuildingBar(buildings);

@@ -1,8 +1,15 @@
-import { Resource } from "./map"
+// import { Resource } from "./map"
+enum Resource {
+	Wheat = 'Wheat',
+	Bread = 'Bread',
+	Air = 'Air'
+}
 
-enum OrderType { Sell, Buy };
+type ResourceMap = Partial<Record<Resource, number>>;
 
-type Order = {
+enum OrderType { Sell = 'Sell', Buy = 'Buy' };
+
+interface Order {
 	type: OrderType,
 	timestamp: number,
 	lifetime: number,
@@ -57,7 +64,7 @@ export function createBuyOrder(
 	}
 }
 
-type OrderBook = {
+interface OrderBook {
 	sells: Order[],
 	buys: Order[],
 
@@ -84,7 +91,7 @@ function createOrderBook(): OrderBook {
 	} as OrderBook
 }
 
-type Market = {
+interface Market {
 	books: Record<Resource, OrderBook>,
 	reservedFunds: Map<Company, number>;
 	currentTime: number,
@@ -127,22 +134,31 @@ export function pushOrder(order: Order, market: Market): boolean {
 		case OrderType.Buy:  book.buys.push(order);  break;
 	}
 
+	order.source.activeOrders.push(order);
+
+	log(`New ${order.type} order from ${order.source.name}: ${order.quantity} ${order.resource} for ${order.limitPricePer} @ ${market.currentTime}`);
+
 	return true;
 }
 
 function calculateAveragePrice(orders: Order[]): number {
-	const totalQuantity = orders.reduce((acc, o) => acc+=o.quantity, 0);
-	const totalValue    = orders.reduce((acc, o) => acc+=o.limitPricePer*o.quantity, 0);
+	const totalQuantity = orders.reduce((acc, o) => acc+o.quantity, 0);
+	const totalValue    = orders.reduce((acc, o) => acc+o.limitPricePer*o.quantity, 0);
 
 	return totalQuantity > 0 ? totalValue / totalQuantity : 0;
 }
 
 function updateBookData(book: OrderBook) {
-	book.highestSell = book.sells[book.sells.length-1].limitPricePer;
-	book.highestBuy  = book.buys[0].limitPricePer;
+	if(book.sells.length > 0) {
+		book.highestSell = book.sells[book.sells.length-1].limitPricePer;
+		book.lowestSell = book.sells[0].limitPricePer;
+	}
 
-	book.lowestSell = book.sells[0].limitPricePer;
-	book.lowestBuy  = book.buys[book.buys.length-1].limitPricePer;
+	if(book.buys.length > 0) {
+		book.highestBuy  = book.buys[0].limitPricePer;
+		book.lowestBuy  = book.buys[book.buys.length-1].limitPricePer;
+	}
+
 
 	book.averageSell = calculateAveragePrice(book.sells);
 	book.averageBuy  = calculateAveragePrice(book.buys);
@@ -161,19 +177,21 @@ function handleTrade(buy: Order, sell: Order, market: Market): boolean {
 
 	buy.spent += traded * price;
 
-	console.log(`Trade: ${traded} ${buy.resource} @ ${price} from ${sell.source} to ${buy.source}`);
+	log(`Trade: ${traded} ${buy.resource} for ${price} from ${sell.source.name} to ${buy.source.name} @ ${market.currentTime}`);
 
 	buy.quantity -= traded;
 	sell.quantity -= traded;
 
-	buy.source.inventory[buy.resource]   += traded;
-	sell.source.inventory[sell.resource] -= traded;
+	buy.source.inventory[buy.resource]!   += traded;
+	sell.source.inventory[sell.resource]! -= traded;
 
 	return true;
 }
 
 function cleanOrder(order: Order, market: Market): boolean {
 	if(order.quantity == 0 || market.currentTime > order.timestamp+order.lifetime) {
+	// if(order.quantity == 0) {
+		order.active = false;
 		releaseFunds(order.source, order.totalReserved-order.spent, market);
 		return false;
 	} else {
@@ -215,112 +233,237 @@ function matchOrders(book: OrderBook, market: Market): void {
 
 export function tickMarket(market: Market, dt: number): void {
 	for(const book of Object.values(market.books)) {
-		matchOrders(book, market);
 		updateBookData(book);
+		matchOrders(book, market);
 	}
 	market.currentTime += dt;
 }
 
 // TEMP MARKET TESTING
 
-type ProductionPlan = {
-	inputResources: Partial<Record<Resource, number>>,
-	inputPrices: Partial<Record<Resource, number>>,
-	output: {
-		resource: Resource,
-		count: number,
-	},
-};
-
-type AgentBehaviour = (company: Company, market: Market, dt: number) => void;
-
-type Company = {
-	name: string,
-	money: number,
-	inventory: Record<Resource, number>,
-	productionPlans: ProductionPlan[],
-	preferredSurplusPercentage: number,
-	activeOrders: Order[],
-	buyBehaviour: AgentBehaviour,
-	sellBehaviour: AgentBehaviour,
+interface ProductionPlan {
+	input: ResourceMap,
+	output: { resource: Resource, count: number },
 }
 
-function getRequiredResources(company: Company, dt: number): Partial<Record<Resource, number>> {
-	const requiredResources: Partial<Record<Resource, number>> = {};
+interface Company {
+	name: String,
+	money: number,
+	inventory: ResourceMap,
+	preferredMargin: number,
+	preferredSurplus: number,
+	priceSensitivity: number,
+	production: ProductionPlan[]
+	activeOrders: Order[]
+}
 
-	for (const plan of company.productionPlans) {
-		for(const [key, count] of Object.entries(plan.inputResources)) {
-			const res = key as Resource;
-			if (!requiredResources[res]) requiredResources[res] = 0;
+function getRequiredResources(company: Company): ResourceMap {
+	return company.production.reduce((required, plan) => {
+		Object.entries(plan.input).forEach(([resKey, need]) => {
+			const res = resKey as Resource;
+			required[res] = (required[res] || 0) + need;
+		});
+		return required;
+	}, {} as ResourceMap);
+}
 
-			const inventoryCount = company.inventory[res];
-			const preferredSurplus = count*dt*(1+company.preferredSurplusPercentage);
-			if (inventoryCount >= preferredSurplus) continue;
+function produce(company: Company, dt: number) {
+	for (const plan of company.production) {
+		const usedResources = {} as ResourceMap;
+		let success = true;
+		for (const [resKey, need] of Object.entries(plan.input)) {
+			const res = resKey as Resource;
 
-			requiredResources[res]! += count*dt;
+			const dNeed = need*dt;
+
+			const have = company.inventory[res] || 0;
+			if(have < dNeed) { success = false; break; }
+			
+			company.inventory[res]! -= dNeed;
+			usedResources[res] = dNeed;
+		}
+	
+		if (success) {
+			const output = plan.output.resource;
+			const count = plan.output.count;
+			company.inventory[output] = (company.inventory[output] || 0) + count*dt;
+		} else {
+			for (const [resKey, used] of Object.entries(usedResources)) {
+				const res = resKey as Resource;
+				company.inventory[res]! += used;
+			}	
 		}
 	}
-
-	return requiredResources;
 }
 
-function buyCautiousFollower(company: Company, market: Market, dt: number) {
-	const requiredResources = getRequiredResources(company, dt);
+function buyBehaviour(
+	company: Company,
+	market: Market,
+	dt: number,
+) {
+	const required = getRequiredResources(company);
 
-	for (const [key, count] of Object.entries(requiredResources)) {
-		const res = key as Resource;
+	for (const [resKey, need] of Object.entries(required)) {
+		const res = resKey as Resource;
 
-		if (company.activeOrders.find(o => o.resource == res && o.type == OrderType.Buy)) continue;
+		if(company.activeOrders.find(o => o.resource == res && o.type == OrderType.Buy)) continue;
+
+		const dNeed = need*dt;
 
 		const book = market.books[res];
-		if (book == undefined) continue;
+		if (!book) continue;
 
-		const basePrice = book.averageSell || 1; 
-		const bidPrice = basePrice * 1.1;
+		const basePrice = book.averageSell || 1;
+		const bidPrice = basePrice * (1 + company.priceSensitivity);
 
-		if (company.money < bidPrice * count) continue;
+		const totalCost = bidPrice * dNeed;
+		if(company.money < totalCost) continue;
 
-		const order = createBuyOrder(company, res, count, bidPrice, 50);
+		const order = createBuyOrder(company, res, dNeed, bidPrice, 5);
+
 		pushOrder(order, market);
-
-		for (const plan of company.productionPlans) {
-			if (plan.inputResources[res]) {
-				plan.inputPrices = plan.inputPrices || {};
-				plan.inputPrices[res] = bidPrice;
-			}
-		}
 	}
 }
 
-function sellCautiousFollower(company: Company, market: Market, dt: number) {
-	for (const plan of company.productionPlans) {
-		const { resource, count } = plan.output;
+function getPlanCost(plan: ProductionPlan, market: Market): number {
+	return Object.entries(plan.input).reduce((total, [resKey, amount]) => {
+		const res = resKey as Resource;
 
-		const inventory = company.inventory[resource] ?? 0;
-		const preferredSurplus = count *dt*(1+company.preferredSurplusPercentage);
+		const avgPrice = market.books[res]?.averageSell || 1;
+		return total + amount * avgPrice;
+	}, 0);
+}
 
-		if (inventory <= preferredSurplus) continue;
-		if (company.activeOrders.find(o => o.resource == resource && o.type == OrderType.Sell)) continue;
+function sellBehaviour(
+	company: Company,
+	market: Market,
+	dt: number
+) {
+	for (const plan of company.production) {
+		const res = plan.output.resource;
+		const produced = plan.output.count*dt;
 
-		const surplus = inventory - preferredSurplus;
-		const book = market.books[resource];
+		if (company.activeOrders.find(o => o.resource == res && o.type == OrderType.Sell)) continue;
+
+		const have = company.inventory[res] || 0;
+
+		const preferredSurplus = produced * (1 + company.preferredSurplus);
+
+		if(have-preferredSurplus <= 0) continue;
+
+		const book = market.books[res];
 		if (!book) continue;
+		
+		const marketPrice = (book.averageBuy || 1) * (1 + company.priceSensitivity);
+		const minPrice = getPlanCost(plan, market) * (1 + company.preferredMargin);
 
-		const outputPrice = Object.entries(plan.inputPrices).reduce((acc, [res, price]) => {
-			const count = plan.inputResources[res as Resource] ?? 0;
-			return acc + price * count;
-		}, 0);
-		const basePrice = Math.max(book.averageBuy, outputPrice);
-		const sellPrice = basePrice * 1.1;
+		const askPrice = Math.max(marketPrice, minPrice);
 
-		const order = createSellOrder(company, resource, surplus, sellPrice, 50);
+
+		const order = createSellOrder(company, res, have, askPrice, 5);
 		pushOrder(order, market);
 	}
+}
+
+function cleanActiveContracts(company: Company): void {
+	company.activeOrders = company.activeOrders.filter(o => o.active);
 }
 
 function tickCompany(company: Company, market: Market, dt: number): void {
-	company.buyBehaviour(company, market, dt);
-	company.sellBehaviour(company, market, dt);
+	produce(company, dt);
+	buyBehaviour(company, market, dt);
+	sellBehaviour(company, market, dt);
+	cleanActiveContracts(company);
+}
 
-	company.activeOrders = company.activeOrders.filter(o => o.active);
+function createFarm(): Company {
+	return {
+		name: "Farm" + Math.floor(Math.random()*100),
+		money: 100,
+		inventory: {},
+		preferredMargin: Math.random()*0.2,
+		preferredSurplus: Math.random()*3,
+		priceSensitivity: Math.random()*0.2,
+		production: [
+			{
+				input: {},
+				output: { resource: Resource.Wheat, count: 1 },
+			}
+		],
+		activeOrders: [],
+	}
+}
+
+function createBakery(): Company {
+	return {
+		name: "Bakery" + Math.floor(Math.random()*100),
+		money: 100,
+		inventory: {},
+		preferredMargin: Math.random()*0.2,
+		preferredSurplus: Math.random()*3,
+		priceSensitivity: Math.random()*0.2,
+		production: [
+			{
+				input: { [Resource.Wheat]: 1 },
+				output: { resource: Resource.Bread, count: 1 }, 
+			}
+		],
+		activeOrders: []
+	}
+}
+
+function createConsumer(): Company {
+	return {
+		name: "Consumer" + Math.floor(Math.random()*1000),
+		money: 10000,
+		inventory: {},
+		preferredMargin: 0,
+		preferredSurplus: 0,
+		priceSensitivity: 0.5,
+		production: [
+			{
+				input: { [Resource.Bread]: 1 },
+				output: { resource: Resource.Air, count: 0 },
+			}
+		],
+		activeOrders: []
+	}
+}
+
+export function initializeMarket() {
+	const farmCount = 5;
+	const bakeryCount = 10;
+	const consumerCount = 16;
+
+	const farms = Array.from({length:farmCount}, () => createFarm());
+	const bakeries = Array.from({length:bakeryCount}, () => createBakery());
+	const consumers = Array.from({length:consumerCount}, () => createConsumer());
+	const companies = [...farms, ...bakeries, ...consumers];
+
+	const market = createMarket();
+
+	let lastTime = performance.now();
+	const loop = (now: number) => {
+		const dt = (now - lastTime)/1000;
+		lastTime = now;
+
+		companies.forEach(c => tickCompany(c, market, dt));
+		tickMarket(market, dt);
+
+		document.getElementById("wheat-price")!.innerText = market.books[Resource.Wheat]!.averageBuy.toFixed(2);
+		document.getElementById("bread-price")!.innerText = market.books[Resource.Bread]!.averageBuy.toFixed(2);
+
+		consumers.forEach(c => c.money = 10000);
+		// console.log(bakeries.reduce((acc, b) => acc+b.money, 0)/bakeries.length);
+	
+		requestAnimationFrame(loop);
+	}
+	requestAnimationFrame(loop);
+}
+
+function log(message: string): void {
+	return;
+	const logElem = document.getElementById("log")!;
+	logElem.innerText += message + "\n";
+	logElem.scrollTop = logElem.scrollHeight;
 }
